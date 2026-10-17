@@ -190,7 +190,7 @@ class CybersecurityTUI(App):
 
     async def execute_script_task(self, script_key: str):
         config = SCRIPTS_CONFIG[script_key]
-        script_path = os.path.abspath(config["script"])
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config["script"])
         log = self.query_one("#console_log", RichLog)
         status = self.query_one("#status-bar", Static)
 

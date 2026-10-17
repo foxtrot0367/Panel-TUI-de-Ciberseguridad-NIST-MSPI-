@@ -13,7 +13,7 @@ echo -e "${GREEN}[+] Gestionando almacenamiento de logs...${NC}"
 mkdir -p "$LOG_ARCHIVE_DIR"
 
 if [ -d "$LOG_SRC_DIR" ]; then
-    find "$LOG_SRC_DIR" -type f -name "*.log" -s +10M -o -name "*.log.*" | while read -r log_file; do
+    find "$LOG_SRC_DIR" -type f \( -name "*.log" -size +10M -o -name "*.log.*" \) | while read -r log_file; do
         filename=$(basename "$log_file")
         archive_name="log_archive_${DATE_STAMP}_${filename}.gz"
         

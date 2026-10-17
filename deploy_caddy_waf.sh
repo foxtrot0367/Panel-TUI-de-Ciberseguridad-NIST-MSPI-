@@ -9,6 +9,8 @@ sudo apt-get update -y
 sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
 
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+echo "Verificando huella de la clave GPG de Caddy..."
+sudo gpg --show-keys --with-fingerprint /usr/share/keyrings/caddy-stable-archive-keyring.gpg | grep -q "7A6B C057 D499 F96B 8D77 8D75 C72E 4DB8 46C4 5B1A" || { echo "ERROR: La huella de la clave GPG no coincide."; exit 1; }
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
 
 sudo apt-get update -y
@@ -28,7 +30,7 @@ cat << 'EOF' | sudo tee /etc/caddy/Caddyfile
     respond @bad_bots "Acceso denegado por reglas WAF" 403
 
     @suspicious_query {
-        query_regexp "(union.*select|concat|exec|drop.*table|<script|%3Cscript|\.\./\.\.)"
+        query_regexp "(\bunion\b.*\bselect\b|\bconcat\b|\bexec\b|\bdrop\b.*\btable\b|<script|%3Cscript|\.\./\.\.)"
     }
     respond @suspicious_query "Payload malicioso detectado" 400
 
