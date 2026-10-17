@@ -1,61 +1,36 @@
+cat > /opt/ciberseguridad_tui/caddy_alerts.sh << 'SCRIPT'
 #!/bin/bash
-set -e
+CADDY_LOG="/var/log/caddy/access.log"
+ALERT_LOG="/var/log/caddy_alerts.log"
+BLOCKED_IPS="/var/log/cblocked_ips.log"
+THRESHOLD=5
 
-GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}[+] Instalando Caddy Server y dependencias...${NC}"
-sudo apt-get update -y
-sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
-
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-echo "Verificando huella de la clave GPG de Caddy..."
-sudo gpg --show-keys --with-fingerprint /usr/share/keyrings/caddy-stable-archive-keyring.gpg | grep -q "7A6B C057 D499 F96B 8D77 8D75 C72E 4DB8 46C4 5B1A" || { echo "ERROR: La huella de la clave GPG no coincide."; exit 1; }
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-
-sudo apt-get update -y
-sudo apt-get install -y caddy
-
-echo -e "${GREEN}[+] Generando Caddyfile con Reglas WAF...${NC}"
-cat << 'EOF' | sudo tee /etc/caddy/Caddyfile
-:80, :443 {
-    @disallowed_methods {
-        not method GET POST PUT DELETE HEAD
-    }
-    respond @disallowed_methods "Método HTTP no permitido por política WAF" 405
-
-    @bad_bots {
-        header_regexp User-Agent "(sqlmap|nikto|nmap|masscan|dirbuster|gobuster)"
-    }
-    respond @bad_bots "Acceso denegado por reglas WAF" 403
-
-    @suspicious_query {
-        query_regexp "(\bunion\b.*\bselect\b|\bconcat\b|\bexec\b|\bdrop\b.*\btable\b|<script|%3Cscript|\.\./\.\.)"
-    }
-    respond @suspicious_query "Payload malicioso detectado" 400
-
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        X-XSS-Protection "1; mode=block"
-        -Server
-        Content-Security-Policy "default-src 'self';"
-    }
-
-    log {
-        output file /var/log/caddy/access.log {
-            roll_size 10mb
-            roll_keep 5
-        }
-        format json
-    }
-
-    reverse_proxy localhost:8080
+log_alert() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [$1] $2" | tee -a "$ALERT_LOG"
 }
-EOF
 
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl restart caddy
-sudo systemctl enable caddy
-echo -e "${GREEN}[✓] Caddy WAF desplegado y activo.${NC}"
+tail -Fn0 "$CADDY_LOG" 2>/dev/null | while read -r line; do
+    ip=$(echo "$line" | grep -oP '"ip":"[^"]*"' | cut -d'"' -f4)
+    status=$(echo "$line" | grep -oP '"status":\d+' | grep -oP '\d+$')
+    [ -z "$ip" ] && continue
+    
+    case "$status" in
+        400) log_alert "CRITICO" "Payload malicioso desde $ip"; echo -e "${RED}[ALERTA] CRITICO: $ip${NC}" ;;
+        403) log_alert "ALTA" "Acceso denegado (WAF) desde $ip" ;;
+        405) log_alert "ALTA" "Método HTTP no permitido desde $ip" ;;
+    esac
+    
+    fails=$(grep -c "\"ip\":\"$ip\"" "$ALERT_LOG" 2>/dev/null || echo "0")
+    if [ "$fails" -ge "$THRESHOLD" ] && ! grep -q "Bloqueada: $ip" "$BLOCKED_IPS" 2>/dev/null; then
+        sudo iptables -I INPUT -s "$ip" -j DROP
+        echo "$(date) - Bloqueada: $ip" >> "$BLOCKED_IPS"
+        log_alert "CRITICO" "IP $ip bloqueada ($THRESHOLD intentos)"
+        echo -e "${RED}[BLOQUEO] $ip bloqueada${NC}"
+        (sleep 3600 && sudo iptables -D INPUT -s "$ip" -j DROP) &
+    fi
+done
+SCRIPT
